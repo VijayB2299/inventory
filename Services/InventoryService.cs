@@ -1,21 +1,39 @@
+using Inventory.Exceptions;
+using Inventory.Domain;
+
+namespace Inventory.Services;
+
 public class InventoryService : IInventoryService
 {
   private readonly List<Product> _products = new();
-  public Task AddProduct(Product product)
+  public Task<Product> AddProduct(int id, string name, decimal price, int quantity)
   {
-    var productWithSameName = _products.Find(p => p.Name.Equals(product.Name, StringComparison.OrdinalIgnoreCase));
-    if (productWithSameName != null)
+    if (ProductExists(name))
     {
       throw new DuplicateProductNameException();
     }
-
+    
+    var product = new Product(id: id, name: name, price: price, quantity: quantity);
     _products.Add(product);
-    return Task.CompletedTask;
+    return Task.FromResult(product);
   }
 
   public Task<IReadOnlyList<Product>> ListProducts()
   {
     return Task.FromResult<IReadOnlyList<Product>>(_products);
+  }
+
+  public Task<Product> GetProduct(int id)
+  {
+    var product = _products.Find(p => p.Id == id);
+    if (product != null)
+    {
+      return Task.FromResult(product);
+    }
+    else
+    {
+      throw new ProductNotFoundException();
+    }
   }
 
   public Task<IReadOnlyList<Product>> SearchProductsByName(string name)
@@ -72,5 +90,10 @@ public class InventoryService : IInventoryService
     {
       throw new ProductNotFoundException();
     }
+  }
+
+  private Boolean ProductExists(string name)
+  {
+    return _products.Any(p => p.Name == name);
   }
 }

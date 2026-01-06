@@ -1,3 +1,5 @@
+namespace Inventory.Domain;
+
 public sealed class Product
 {
     public int Id { get; }
@@ -9,7 +11,7 @@ public sealed class Product
     {
 
         if (id <= 0)
-            throw new ArgumentException("Id should be a valid positive integer.", nameof(id));
+            throw new ArgumentException("Id should be a valid.", nameof(id));
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Name cannot be empty.", nameof(name));
         if (price < 0)
