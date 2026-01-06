@@ -1,76 +1,145 @@
+using Inventory.Exceptions;
+using Inventory.Models;
+using Inventory.Data;
+using Microsoft.EntityFrameworkCore;
+using Inventory.Common.Pagination;
+
+namespace Inventory.Services;
+
 public class InventoryService : IInventoryService
 {
-  private readonly List<Product> _products = new();
-  public Task AddProduct(Product product)
+  private readonly InventoryDbContext _db;
+  public InventoryService(InventoryDbContext db) => _db = db;
+  public async Task<Product> AddProduct(CreateProductDto product)
   {
-    var productWithSameName = _products.Find(p => p.Name.Equals(product.Name, StringComparison.OrdinalIgnoreCase));
-    if (productWithSameName != null)
+    if (await ProductExists(product.Name))
     {
       throw new DuplicateProductNameException();
     }
 
-    _products.Add(product);
-    return Task.CompletedTask;
+    var newProduct = new Product(
+      Guid.NewGuid(),
+      product.Name,
+      product.Price,
+      product.Quantity
+    );
+
+    _db.Products.Add(newProduct);
+    await _db.SaveChangesAsync();
+    return newProduct;
   }
 
-  public Task<IReadOnlyList<Product>> ListProducts()
+  public async Task<PaginatedList<Product>> ListProducts(PageParameters pageParameters, SortParameters sortParameters, FilterParameters filterParameters)
   {
-    return Task.FromResult<IReadOnlyList<Product>>(_products);
-  }
+    var query = _db.Products.AsQueryable();
 
-  public Task<IReadOnlyList<Product>> SearchProductsByName(string name)
-  {
-    var results = _products.Where(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).ToList();
-    return Task.FromResult<IReadOnlyList<Product>>(results);
-  }
-
-  public Task<decimal> GetTotalInventoryValue()
-  {
-    decimal totalValue = _products.Sum(p => p.Price * p.Quantity);
-    return Task.FromResult(totalValue);
-  }
-
-  public Task<Product?> FindHighPricedProduct()
-  {
-    var highPricedProduct = _products.MaxBy(p => p.Price);
-    if (highPricedProduct != null)
+    if (sortParameters.SortBy == "price")
     {
-      return Task.FromResult<Product?>(highPricedProduct);
-    } else
-    {
-      throw new ProductNotFoundException();
+      query = sortParameters.Descending ? query.OrderByDescending(p => p.Price) : query.OrderBy(p => p.Price);
     }
-  }
-
-  public Task<Product> UpdateProductQuantity(int productId, int newQuantity)
-  {
-    var existingProductIndex = _products.FindIndex(p => p.Id == productId);
-    var product = _products[existingProductIndex];
-    var updatedProduct = new Product(id: product.Id, name: product.Name, price: product.Price, quantity: newQuantity);
-    _products[existingProductIndex] = updatedProduct;
-    return Task.FromResult(updatedProduct);
-  }
-
-  public Task<Product> UpdateProductPrice(int productId, decimal newPrice)
-  {
-    var existingProductIndex = _products.FindIndex(p => p.Id == productId);
-    var product = _products[existingProductIndex];
-    var updatedProduct = new Product(id: product.Id, name: product.Name, price: newPrice, quantity: product.Quantity);
-    _products[existingProductIndex] = updatedProduct;
-    return Task.FromResult(updatedProduct);
-  }
-
-  public Task DeleteProduct(int productId)
-  {
-    var productToDelete = _products.Find(p => p.Id == productId);
-    if (productToDelete != null)
+    else if (sortParameters.SortBy == "name")
     {
-      _products.Remove(productToDelete);
-      return Task.CompletedTask;
+      query = sortParameters.Descending ? query.OrderByDescending(p => p.Name) : query.OrderBy(p => p.Name);
+    }
+    else
+    {
+      query = sortParameters.Descending ? query.OrderByDescending(p => p.Id) : query.OrderBy(p => p.Id);
+    }
+
+    if (filterParameters.MinPrice > 0)
+    {
+      query = query.Where(p => p.Price >= filterParameters.MinPrice);
+    }
+    
+    if (filterParameters.MaxPrice < int.MaxValue)
+    {
+      query = query.Where(p => p.Price <= filterParameters.MaxPrice);
+    }
+
+    if (filterParameters.LowStock)
+    {
+      query = query.Where(p => p.Quantity <= 5);
+    }
+
+    var results = await PaginatedList<Product>.FetchAsync(query, pageParameters.Page, pageParameters.PageSize);
+    return results;
+  }
+
+  public async Task<Product> GetProduct(Guid id)
+  {
+    var product = await _db.Products.Where(p => p.Id == id).FirstOrDefaultAsync();
+    if (product != null)
+    {
+      return new Product(product.Id, product.Name, product.Price, product.Quantity);
     }
     else
     {
       throw new ProductNotFoundException();
     }
+  }
+
+  public async Task<IEnumerable<Product>> SearchProductsByName(string name)
+  {
+    var results = await _db.Products.Where(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).ToListAsync();
+    return results.Select(p => new Product(p.Id, p.Name, p.Price, p.Quantity));
+  }
+
+  public async Task<decimal> GetTotalInventoryValue()
+  {
+    decimal totalValue = await _db.Products.SumAsync(p => p.Price * p.Quantity);
+    return totalValue;
+  }
+
+  public async Task<Product?> FindHighPricedProduct()
+  {
+    var highPricedProduct = await _db.Products.OrderByDescending(p => p.Price)
+            .Select(p => new Product(p.Id, p.Name, p.Price, p.Quantity))
+            .FirstOrDefaultAsync();
+
+    if (highPricedProduct != null)
+    {
+      return highPricedProduct;
+    }
+    else
+    {
+      return null;
+    }
+  }
+
+  public async Task<Product> UpdateProductQuantity(Guid productId, int newQuantity)
+  {
+    var product = await _db.Products.FirstAsync(p => p.Id == productId);
+    product.Quantity = newQuantity;
+    await _db.SaveChangesAsync();
+
+    return new Product(product.Id, product.Name, product.Price, product.Quantity);
+  }
+
+  public async Task<Product> UpdateProductPrice(Guid productId, decimal newPrice)
+  {
+    var product = await _db.Products.FirstAsync(p => p.Id == productId);
+    product.Price = newPrice;
+    await _db.SaveChangesAsync();
+
+    return new Product(product.Id, product.Name, product.Price, product.Quantity);
+  }
+
+  public async Task DeleteProduct(Guid productId)
+  {
+    var productToDelete = await _db.Products.FirstOrDefaultAsync(p => p.Id == productId);
+    if (productToDelete != null)
+    {
+      _db.Products.Remove(productToDelete);
+      await _db.SaveChangesAsync();
+    }
+    else
+    {
+      throw new ProductNotFoundException();
+    }
+  }
+
+  private async Task<Boolean> ProductExists(string name)
+  {
+    return await _db.Products.AnyAsync(p => p.Name == name);
   }
 }

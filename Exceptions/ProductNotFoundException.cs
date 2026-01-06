@@ -1,3 +1,5 @@
+namespace Inventory.Exceptions;
+
 public class ProductNotFoundException : Exception
 {
   public override string Message

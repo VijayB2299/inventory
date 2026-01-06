@@ -1,3 +1,5 @@
+namespace Inventory.Exceptions;
+
 public class DuplicateProductNameException : Exception
 {
   public override string Message
